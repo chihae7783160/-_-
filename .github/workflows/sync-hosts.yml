@@ -1,0 +1,38 @@
+name: 更新主機總表與查詢網站
+on:
+  push:
+    branches: [main]
+    paths:
+      - '全聯-監控主機總表.xlsx'
+      - 'index.html'
+      - 'sync_hosts.py'
+      - '.github/workflows/sync-hosts.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install openpyxl==3.1.5
+      - name: 檢查總表並更新查詢頁
+        run: python sync_hosts.py
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+      - name: 發布查詢網站
+        id: deployment
+        uses: actions/deploy-pages@v4
