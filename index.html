@@ -224,6 +224,23 @@ async function loadStores({quiet=false}={}){
   catch(e){status((DATA.length?'更新失敗，目前保留上次讀取的內容。':'')+e.message,true)}
   finally{loading=false;$('refreshButton').disabled=false}
 }
+async function showWarrantyPilot(store, content) {
+  const loadingPanel = panel('設備保固到期日', '正在讀取保固資料…', []);
+  content.prepend(loadingPanel);
+  const params = new URLSearchParams({
+    store_id: 'eq.' + store.id,
+    select: 'equipment,expires_on',
+    order: 'display_order,equipment'
+  });
+  try {
+    const rows = await request('/rest/v1/qihai_equipment_warranties?' + params);
+    const fields = rows.map(row => [row.equipment, row.expires_on || '待確認']);
+    const hint = fields.length ? '依保固文件或廠商書面確認登錄。' : '目前尚無保固資料。';
+    loadingPanel.replaceWith(panel('設備保固到期日', hint, fields));
+  } catch {
+    loadingPanel.replaceWith(panel('設備保固到期日', '暫時無法讀取。請關閉明細後重新開啟。', []));
+  }
+}
 const originalOpenStore=openStore;
 openStore=function(r,section='全部'){
   originalOpenStore(r,section);
@@ -232,7 +249,9 @@ openStore=function(r,section='全部'){
   const login=el('button','','管理員登入');login.hidden=!!editor;login.onclick=()=>{$('loginDialog').showModal();$('loginEmail').focus()};tools.append(edit,login);
   if(editor){const history=el('button','','修改紀錄');history.onclick=()=>showHistory(r._key);tools.append(history)}
   const meta=recordMeta.get(r._key);if(meta)tools.append(el('p','hint','資料更新時間：'+new Date(meta.updated_at).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'})+' · 版本 '+meta.version));
-  $('detailBody').prepend(tools);
+  const content = $('detailBody');
+  if (section === '全部' && String(r.id) === '189300') showWarrantyPilot(r, content);
+  content.prepend(tools);
 };
 function textField(label,value,{multiline=false,max=200}={}){
   const wrapper=el('label','edit-field',label),input=el(multiline?'textarea':'input');if(!multiline)input.type='text';input.value=value||'';input.maxLength=max;if(multiline)input.rows=4;input.oninput=()=>{dirty=true};wrapper.append(input);return {wrapper,input};
