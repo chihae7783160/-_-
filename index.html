@@ -72,6 +72,44 @@ const WORKBOOK_TEMPLATE="UEsDBBQABgAIAAAAIQDOD9XvqgEAAIQIAAATAAgCW0NvbnRlbnRfVHl
 const xmlEscape=value=>String(value??'').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g,'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
 function columnNumber(ref){return [...ref.match(/^[A-Z]+/)[0]].reduce((n,c)=>n*26+c.charCodeAt(0)-64,0)}
 function cellColumn(n){let s='';for(;n;n=Math.floor((n-1)/26))s=String.fromCharCode(65+(n-1)%26)+s;return s}
+function xmlText(value){return String(value).replace(/<[^>]*>/g,'').replace(/&#(x[0-9a-f]+|\d+);/gi,(_,v)=>String.fromCodePoint(v[0].toLowerCase()==='x'?parseInt(v.slice(1),16):Number(v))).replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&amp;/g,'&')}
+function wrappedStyles(xml){
+  return xml.replace(/<cellXfs\b([^>]*)>([\s\S]*?)<\/cellXfs>/,(all,attrs,body)=>'<cellXfs'+attrs+'>'+body.replace(/<xf\b([^>]*?)(?:\/>|>([\s\S]*?)<\/xf>)/g,(xf,attributes,inside='')=>{
+    attributes=attributes.replace(/\s+applyAlignment="[^"]*"/g,'');
+    if(/<alignment\b/.test(inside))inside=inside.replace(/<alignment\b([^>]*?)(?:\/>|><\/alignment>)/,(a,p)=>'<alignment'+p.replace(/\s+(wrapText|shrinkToFit)="[^"]*"/g,'')+' wrapText="1" shrinkToFit="0"/>');
+    else inside+='<alignment vertical="top" wrapText="1"/>';
+    return '<xf'+attributes+' applyAlignment="1">'+inside+'</xf>';
+  })+'</cellXfs>');
+}
+function fitWorksheetRows(xml,styles,sharedStrings=[]){
+  const attr=(s,k)=>s.match(new RegExp('\\b'+k+'="([^"]*)"'))?.[1];
+  const fonts=[...(styles.match(/<fonts\b[^>]*>([\s\S]*?)<\/fonts>/)?.[1]||'').matchAll(/<font\b[^>]*>([\s\S]*?)<\/font>/g)].map(m=>Number(m[1].match(/<sz\b[^>]*val="([^"]+)"/)?.[1]||12));
+  const xfs=[...(styles.match(/<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/)?.[1]||'').matchAll(/<xf\b([^>]*?)(?:\/>|>[\s\S]*?<\/xf>)/g)].map(m=>Number(attr(m[1],'fontId')||0));
+  const widths=new Map(),heights=new Map();
+  const defaultWidth=Number(xml.match(/<sheetFormatPr\b[^>]*defaultColWidth="([^"]+)"/)?.[1]||8.43);
+  const defaultHeight=Number(xml.match(/<sheetFormatPr\b[^>]*defaultRowHeight="([^"]+)"/)?.[1]||15);
+  for(const m of xml.matchAll(/<col\b([^>]*?)\/>/g)){const min=Number(attr(m[1],'min')),max=Number(attr(m[1],'max')),width=Number(attr(m[1],'width')||defaultWidth);for(let c=min;c<=max&&c<=16384;c++)widths.set(c,width)}
+  for(const m of xml.matchAll(/<row\b([^>]*?)>/g))heights.set(Number(attr(m[1],'r')),Number(attr(m[1],'ht')||defaultHeight));
+  const merges=new Map();
+  for(const m of xml.matchAll(/<mergeCell\b[^>]*ref="([A-Z]+\d+):([A-Z]+\d+)"/g))merges.set(m[1],{endCol:columnNumber(m[2]),endRow:Number(m[2].match(/\d+$/)[0])});
+  const constraints=[];
+  for(const m of xml.matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)){
+    const ref=attr(m[1],'r');if(!ref)continue;
+    const body=m[2]||'',type=attr(m[1],'t');
+    const text=type==='s'?sharedStrings[Number(body.match(/<v>(.*?)<\/v>/)?.[1])]:type==='inlineStr'?[...body.matchAll(/<t\b[^>]*>([\s\S]*?)<\/t>/g)].map(t=>xmlText(t[1])).join(''):xmlText(body.match(/<v>(.*?)<\/v>/)?.[1]||'');
+    if(!text)continue;
+    const col=columnNumber(ref),row=Number(ref.match(/\d+$/)[0]),merge=merges.get(ref)||{endCol:col,endRow:row};let pixels=0;
+    for(let c=col;c<=merge.endCol;c++)pixels+=(widths.get(c)||defaultWidth)*7;
+    const fontSize=fonts[xfs[Number(attr(m[1],'s')||0)]]||12;
+    const capacity=Math.max(1,(pixels-12)/(fontSize*.8)*.88);
+    const lines=String(text).replace(/\r\n?/g,'\n').split('\n').reduce((n,line)=>{let count=1,used=0;for(const ch of line){const size=/[\u0020-\u007e]/.test(ch)?1:2;if(used+size>capacity&&used>0){count++;used=0}used+=size}return n+count},0);
+    constraints.push({row,endRow:merge.endRow,required:Math.max(defaultHeight,Math.ceil(lines*fontSize*1.45+8))});
+  }
+  // Solve single-row cells first; then distribute merged-cell requirements over their rows.
+  constraints.sort((a,b)=>(a.endRow-a.row)-(b.endRow-b.row));
+  for(const item of constraints){let available=0;for(let r=item.row;r<=item.endRow;r++)available+=heights.get(r)||defaultHeight;const extra=Math.max(0,item.required-available)/(item.endRow-item.row+1);for(let r=item.row;r<=item.endRow;r++)heights.set(r,Math.min(409.5,Math.ceil(((heights.get(r)||defaultHeight)+extra)*2)/2))}
+  return xml.replace(/<row\b([^>]*?)(\/?)>/g,(all,attrs,slash)=>{const row=Number(attr(attrs,'r'));if(!heights.has(row))return all;return '<row'+attrs.replace(/\s+(ht|customHeight)="[^"]*"/g,'')+' ht="'+heights.get(row)+'" customHeight="1"'+slash+'>'});
+}
 function updateCell(xml,ref,value){
   if(!/^[A-Z]+[1-9]\d*$/.test(ref))throw new Error('無效的 Excel 儲存格：'+ref);
   const re=new RegExp('<c\\b([^>]*?\\br="'+ref+'"[^>]*?)(?:\\/>|>[\\s\\S]*?<\\/c>)');
@@ -91,6 +129,10 @@ function extraWorksheet(rows){
 }
 async function exportWorkbook(rows){
   const zip=await JSZip.loadAsync(WORKBOOK_TEMPLATE,{base64:true}),sheets={};
+  const styles=wrappedStyles(await zip.file('xl/styles.xml').async('string'));
+  const sharedXml=zip.file('xl/sharedStrings.xml')?await zip.file('xl/sharedStrings.xml').async('string'):'';
+  const sharedStrings=[...sharedXml.matchAll(/<si\b[^>]*>([\s\S]*?)<\/si>/g)].map(m=>[...m[1].matchAll(/<t\b[^>]*>([\s\S]*?)<\/t>/g)].map(t=>xmlText(t[1])).join(''));
+  zip.file('xl/styles.xml',styles);
   for(const [name,path]of Object.entries(WORKBOOK_SHEETS))sheets[name]=await zip.file(path).async('string');
   const stores=rows.map(row=>row.data),flat=[['門市代號','營業所','處','專案區','主機表區','門市狀態','來源名稱','主機位置','主機型號','安裝／更換紀錄','營業所備註','資料更新時間']],unmapped=[];
   for(const row of rows){const r=row.data;
@@ -106,11 +148,11 @@ async function exportWorkbook(rows){
     for(const rec of r.hostRecords){if(!rec.hosts.length)flat.push([r.id,r.name,r.dept,r.area,rec.area,state,rec.name,'','','',rec.note,timestamp]);for(const h of rec.hosts)flat.push([r.id,r.name,r.dept,r.area,rec.area,state,rec.name,h.location,h.model,h.history,rec.note,timestamp])}
   }
   for(const fix of WORKBOOK_AREA_FIXES)sheets[fix.sheet]=updateCell(sheets[fix.sheet],fix.cell,'旗美區');
-  for(const [name,xml]of Object.entries(sheets))zip.file(WORKBOOK_SHEETS[name],xml);
+  for(const [name,xml]of Object.entries(sheets))zip.file(WORKBOOK_SHEETS[name],fitWorksheetRows(xml,styles,sharedStrings));
   let workbook=await zip.file('xl/workbook.xml').async('string'),rels=await zip.file('xl/_rels/workbook.xml.rels').async('string'),types=await zip.file('[Content_Types].xml').async('string');
   let next=Math.max(...[...workbook.matchAll(/sheetId="(\d+)"/g)].map(m=>Number(m[1])))+1;
   const note=[['匯出說明','內容'],['匯出時間',new Date().toLocaleString('zh-TW',{timeZone:'Asia/Taipei'})],['資料來源','共用資料庫，匯出前重新讀取全部門市資料'],['門市紀錄數',rows.length],['原表版型','保留原總表工作表，按來源儲存格回填最新主機資料與備註'],['區別修正','仁湖區顯示為旗美區'],['型號統計工作表','原表 G216/G5016 為獨立統計紀錄；主機編輯不自動改寫該表，請以「最新主機明細」核對最新型號'],['多筆來源名稱','同門市的不同來源紀錄分列，不自動將台數相加'],['待確認門市','不推測門市代號或關店狀態'],['未對應原表位置',unmapped.join('、')||'無'],['完工日期','主機歷史日期不套用為四個專案完工日期']];
-  for(const [name,table]of [['最新主機明細',flat],['匯出說明',note]]){const id=next++,rid='rIdQihai'+id,path='xl/worksheets/sheet'+id+'.xml';zip.file(path,extraWorksheet(table));workbook=workbook.replace('</sheets>','<sheet name="'+name+'" sheetId="'+id+'" r:id="'+rid+'"/></sheets>');rels=rels.replace('</Relationships>','<Relationship Id="'+rid+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet'+id+'.xml"/></Relationships>');types=types.replace('</Types>','<Override PartName="/'+path+'" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>')}
+  for(const [name,table]of [['最新主機明細',flat],['匯出說明',note]]){const id=next++,rid='rIdQihai'+id,path='xl/worksheets/sheet'+id+'.xml';zip.file(path,fitWorksheetRows(extraWorksheet(table),styles));workbook=workbook.replace('</sheets>','<sheet name="'+name+'" sheetId="'+id+'" r:id="'+rid+'"/></sheets>');rels=rels.replace('</Relationships>','<Relationship Id="'+rid+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet'+id+'.xml"/></Relationships>');types=types.replace('</Types>','<Override PartName="/'+path+'" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>')}
   zip.file('xl/workbook.xml',workbook);zip.file('xl/_rels/workbook.xml.rels',rels);zip.file('[Content_Types].xml',types);
   return zip.generateAsync({type:'uint8array',compression:'DEFLATE'});
 }
