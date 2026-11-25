@@ -5,7 +5,9 @@
 select{font:inherit;border:1px solid #b4c7bf;border-radius:10px;background:white;padding:12px;color:#183737;width:100%;min-height:46px}.regions{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:18px 0}.regions label{font-size:14px}.regions select{margin-top:7px}.options{display:flex;gap:15px;flex-wrap:wrap;align-items:center;font-size:14px;margin:15px 0}.options label{display:flex;gap:7px;align-items:center}.options input{width:18px;height:18px}.closed-tag{background:#f6e3dc;color:#824a37}.pending-tag{background:#fff0cd;color:#775621}.source-title{font-size:15px;margin:18px 0 7px}.host-item{border-top:2px solid #dce6de;margin-top:14px;padding-top:8px}.summary-note{background:#fff5db;padding:12px;border-radius:8px;font-size:13px;line-height:1.8}.host-title{background:#f1f6f2;padding:10px;border-radius:8px;font-size:15px;margin:12px 0 0}
 .store{background:white;border:1px solid #c9d7d0}.store-view{float:right;padding:4px 8px;min-height:44px}.tags button.tag{min-height:44px;padding:9px 12px;border:1px solid #b8cfc2}.detail-nav{display:flex;gap:7px;flex-wrap:wrap;margin-top:16px}.detail-nav button[aria-pressed=true]{background:#245b4e;color:white}.panel[hidden]{display:none}
 .shared-toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 12px}.shared-toolbar button{font-size:14px}.shared-status{padding:12px;background:#e6f1ec;border-radius:9px;font-size:14px;line-height:1.6;margin-bottom:18px}.error{color:#9e2929}.shared-status.error{background:#fff0ee}.account-status{font-size:14px;color:#46665b}.detail-tools{padding:14px 0;border-bottom:1px solid #dae6de;display:flex;gap:8px;align-items:center;flex-wrap:wrap}.detail-tools p{width:100%;margin:0}button:disabled{opacity:.55;cursor:default}.edit-group{border:1px solid #cfddd4;border-radius:10px;padding:15px;margin:16px 0}.edit-group legend{padding:0 7px;font-weight:600}.edit-field{display:block;font-size:14px;margin:12px 0}.edit-field input,.edit-field textarea{display:block;margin-top:6px;width:100%;font:inherit;font-size:16px;padding:12px;border:1px solid #adc6b9;border-radius:8px;background:white;color:#183737}.edit-host{border-top:1px solid #dce6de;margin-top:18px}.edit-host h4{margin:14px 0 8px}.dialog-actions{display:flex;gap:10px;justify-content:flex-end;position:sticky;bottom:0;background:#fff;padding:16px 0;border-top:1px solid #dce6de}.primary{background:#245b4e;color:#fff}.primary:hover{background:#194638}.history-text{font:inherit;font-size:14px;white-space:pre-wrap;overflow-wrap:anywhere}.body .hint{font-size:14px}#loginDialog{max-width:460px}#loginDialog form{padding:18px 22px}.login-head{padding:18px 22px;border-bottom:1px solid #dce6de;font-size:20px;font-weight:600}.login-actions{display:flex;gap:9px;justify-content:flex-end}.meta{font-size:14px}.tag{font-size:14px}
-.remember-option{display:flex;align-items:center;gap:9px;min-height:44px;font-size:16px;margin:14px 0}.remember-option input{width:20px;height:20px;padding:0;flex-shrink:0}</style></head><body>
+.remember-option{display:flex;align-items:center;gap:9px;min-height:44px;font-size:16px;margin:14px 0}.remember-option input{width:20px;height:20px;padding:0;flex-shrink:0}</style><style>
+.repair-warranty [hidden]{display:none!important}.repair-form fieldset{border:0;margin:0;padding:0;min-width:0}.repair-form input,.repair-form select,.repair-form textarea{box-sizing:border-box;width:100%;font-size:1rem}.repair-warranty h4{margin-block:.5rem}.repair-warranty .history-text{white-space:pre-wrap;overflow-wrap:anywhere}
+</style></head><body>
 <header><div class="brand">七海弱電工程公司</div><h1>七海_全聯查詢系統</h1><p>找門市、看需求，施工前一查就清楚。</p></header>
 <main><div class="shared-toolbar"><button id="refreshButton" type="button">重新讀取</button><button id="downloadExcel" type="button">下載最新 Excel</button><button id="loginButton" type="button">管理員登入</button><button id="logoutButton" type="button" hidden>登出</button><span id="accountStatus" class="account-status">公開查詢</span></div><div id="syncStatus" class="shared-status" role="status" aria-live="polite">正在連接共用資料庫…</div><label for="q" style="display:block;margin-bottom:9px;font-size:14px;font-weight:600">營業所名稱或門市代號</label><div class="search"><input id="q" type="search" placeholder="例如：花蓮、吉安海岸、212300" autocomplete="off"><button id="clear" aria-label="清除搜尋">清除</button></div>
 <div class="regions"><label for="dept">先選處<select id="dept"><option value="">全部處</option></select></label><label for="area">再選區<select id="area"><option value="">全部區</option></select></label></div><div class="options"><label><input type="checkbox" id="hostsOnly">僅顯示有主機資料</label><label><input type="checkbox" id="showClosed">包含已關店</label></div><div class="filters" id="filters" aria-label="依專案篩選"></div><div class="hint">可輸入部分名稱。專案篩選僅表示原表有記錄，不代表尚未施工。</div><div class="count" id="count" role="status" aria-live="polite"></div><div class="grid" id="results"></div><button id="more" class="more" hidden>顯示更多營業所</button>
@@ -260,6 +262,206 @@ async function loadStores({quiet=false}={}){
   catch(e){status((DATA.length?'更新失敗，目前保留上次讀取的內容。':'')+e.message,true)}
   finally{loading=false;$('refreshButton').disabled=false}
 }
+function taipeiToday() {
+  const parts = new Intl.DateTimeFormat('en', {
+    timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts();
+  const date = Object.fromEntries(parts.map(({type, value}) => [type, value]));
+  return [date.year, date.month, date.day].join('-');
+}
+
+async function showRepairWarranty(store, content) {
+  const section = el('section', 'panel repair-warranty');
+  section.append(el('h3', '', '維修保固'));
+  const message = el('p', 'hint');
+  message.setAttribute('role', 'status');
+  section.append(message);
+  content.prepend(section);
+
+  if (!editor) {
+    section.addEventListener('repair-login', () => {
+      section.remove();
+      showRepairWarranty(store, content);
+    }, {once: true});
+    message.textContent = '請使用管理員帳號登入，即可查看開幕設備及登錄維修。';
+    const login = el('button', '', '管理員登入');
+    login.type = 'button';
+    login.onclick = () => $('loginButton').onclick();
+    section.append(login);
+    return;
+  }
+
+  message.textContent = '正在讀取維修保固資料…';
+  try {
+    const params = new URLSearchParams({
+      store_id: 'eq.' + store.id,
+      select: 'id,category,equipment,specification,quantity,opened_on,warranty_years,is_camera',
+      order: 'display_order'
+    });
+    const items = await request('/rest/v1/qihai_repair_catalog?' + params, {auth: true});
+    if (!items.length) {
+      message.textContent = '尚無開幕設備資料。';
+      return;
+    }
+    message.textContent = '開幕日 ' + items[0].opened_on.replaceAll('-', '/');
+    const today = taipeiToday();
+    const equipment = el('select');
+    for (const category of new Set(items.map(item => item.category))) {
+      const group = el('optgroup');
+      group.label = category;
+      for (const item of items.filter(item => item.category === category)) {
+        group.append(new Option(item.equipment, item.id));
+      }
+      equipment.append(group);
+    }
+
+    const specs = el('p', 'hint');
+    const sectionForm = el('form', 'repair-form');
+    const wrap = (label, input) => {
+      const field = el('label', 'edit-field', label);
+      field.append(input);
+      return field;
+    };
+    const date = el('input');
+    date.type = 'date';
+    date.required = true;
+    date.max = today;
+    date.value = today;
+    const label = el('input');
+    label.type = 'text';
+    label.maxLength = 80;
+    const labelField = wrap('實際設備標示', label);
+    const component = el('select');
+    const kind = el('select');
+    const kinds = {
+      new: '更換新品',
+      used_new_price: '更換舊品，按新品價格請款',
+      used: '更換舊品，非新品價格請款',
+      board: '更換機板'
+    };
+    const components = {equipment: '設備', camera: '攝影機', power: '電源', line: '線路',
+      camera_power: '攝影機＋電源（均為新品）', board: '更換機板'};
+    for (const value of ['new', 'used_new_price', 'used']) kind.append(new Option(kinds[value], value));
+    const kindField = wrap('更換品及請款方式', kind);
+    const note = el('textarea');
+    note.required = true;
+    note.maxLength = 1000;
+    note.rows = 3;
+    const button = el('button', '', '儲存維修紀錄');
+    button.type = 'submit';
+    const feedback = el('p', 'hint');
+    feedback.setAttribute('role', 'status');
+    const history = el('div');
+    const more = el('button', '', '查看更早紀錄');
+    more.type = 'button';
+    more.hidden = true;
+    const fields = el('fieldset');
+    fields.append(wrap('設備', equipment), specs, wrap('維修日期', date),
+      wrap('維修項目', component), labelField, kindField, wrap('維修內容', note), button);
+    sectionForm.append(fields, feedback);
+    section.append(sectionForm, el('h4', '', '維修紀錄'), history, more);
+    const currentItem = () => items.find(item => item.id === equipment.value);
+
+    let page = 0;
+    let historyVersion = 0;
+    async function loadHistory(reset = true) {
+      const version = ++historyVersion;
+      const item = currentItem();
+      if (reset) {
+        page = 0;
+        history.replaceChildren(el('p', 'hint', '正在讀取維修紀錄…'));
+      }
+      more.hidden = true;
+      try {
+        const params = new URLSearchParams({
+          equipment_id: 'eq.' + item.id,
+          select: 'id,asset_label,component,repaired_on,repair_kind,repair_note,expires_on',
+          order: 'repaired_on.desc,id.desc',
+          limit: '25', offset: String(page * 25)
+        });
+        const rows = await request('/rest/v1/qihai_repair_events?' + params, {auth: true});
+        if (version !== historyVersion) return;
+        if (reset) history.replaceChildren();
+        if (!rows.length && reset) history.append(el('p', 'hint', '尚無維修紀錄。'));
+        for (const row of rows) {
+          const card = el('section', 'panel');
+          const summary = row.component === 'board' ? row.repaired_on :
+            [row.repaired_on, row.asset_label, components[row.component], kinds[row.repair_kind]].join(' · ');
+          card.append(el('h4', '', summary), el('p', 'history-text', row.repair_note));
+          if (row.component !== 'board') {
+            card.append(el('p', 'hint', row.expires_on ? '保固到期 ' + row.expires_on : '不保固'));
+          }
+          history.append(card);
+        }
+        page++;
+        more.hidden = rows.length < 25;
+      } catch (error) {
+        if (version !== historyVersion) return;
+        history.append(el('p', 'error', error.message));
+        more.hidden = false;
+        more.textContent = '重試讀取紀錄';
+      }
+    }
+    more.onclick = () => {
+      more.textContent = '查看更早紀錄';
+      loadHistory(page === 0);
+    };
+    component.onchange = () => {
+      const board = component.value === 'board';
+      labelField.hidden = board;
+      label.disabled = board;
+      label.required = !board;
+      kindField.hidden = board || component.value === 'camera_power';
+      kind.disabled = kindField.hidden;
+    };
+    equipment.onchange = () => {
+      const item = currentItem();
+      date.min = item.opened_on;
+      const openingExpiry = new Date(item.opened_on + 'T00:00:00Z');
+      openingExpiry.setUTCFullYear(openingExpiry.getUTCFullYear() + item.warranty_years);
+      specs.textContent = [item.specification, item.quantity, item.warranty_years
+        ? '開幕保固 ' + item.warranty_years + ' 年（到期 ' + openingExpiry.toISOString().slice(0, 10) + '）'
+        : '不保固'].join(' · ');
+      label.placeholder = item.is_camera ? '例如 A5號（外圍）、C3號（賣場）' : '資產編號或實際位置';
+      label.value = '';
+      const parts = item.is_camera ? ['camera', 'power', 'line', 'camera_power'] : ['equipment'];
+      component.replaceChildren(...[...parts, 'board'].map(part => new Option(components[part], part)));
+      component.onchange();
+      loadHistory();
+    };
+    equipment.onchange();
+
+    let lastSubmission;
+    sectionForm.onsubmit = async event => {
+      event.preventDefault();
+      if (fields.disabled) return;
+      fields.disabled = true;
+      feedback.textContent = '正在儲存…';
+      try {
+        const payload = {
+          equipment_key: equipment.value, label: label.disabled ? null : label.value,
+          repair_date: date.value, part: component.value, kind: kind.disabled ? null : kind.value, note: note.value
+        };
+        const signature = JSON.stringify(payload);
+        if (lastSubmission?.signature !== signature) lastSubmission = {signature, id: crypto.randomUUID()};
+        await request('/rest/v1/rpc/qihai_record_repair', {
+          method: 'POST', auth: true, body: {...payload, submission: lastSubmission.id}
+        });
+        lastSubmission = null;
+        note.value = '';
+        feedback.textContent = '已儲存維修紀錄。';
+        await loadHistory();
+      } catch (error) {
+        feedback.textContent = error.message;
+      } finally {
+        fields.disabled = false;
+      }
+    };
+  } catch (error) {
+    message.textContent = '無法讀取維修保固資料。' + error.message;
+  }
+}
+
 async function showWarrantyPilot(store, content) {
   const loadingPanel = panel('設備保固到期日', '正在讀取保固資料…', []);
   content.prepend(loadingPanel);
@@ -287,6 +489,7 @@ openStore=function(r,section='全部'){
   const meta=recordMeta.get(r._key);if(meta)tools.append(el('p','hint','資料更新時間：'+new Date(meta.updated_at).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'})+' · 版本 '+meta.version));
   const content = $('detailBody');
   if (section === '全部' && String(r.id) === '189300') showWarrantyPilot(r, content);
+  if (section === '全部' && String(r.id) === '212300') showRepairWarranty(r, content);
   content.prepend(tools);
 };
 function textField(label,value,{multiline=false,max=200}={}){
@@ -342,7 +545,7 @@ async function showHistory(key){
 $('loginButton').onclick=()=>{$('loginError').textContent='';$('rememberLogin').checked=rememberLogin;$('loginDialog').showModal();$('loginEmail').focus()};$('closeLogin').onclick=()=>$('loginDialog').close();
 $('loginForm').onsubmit=async event=>{
   event.preventDefault();$('submitLogin').disabled=true;$('loginError').textContent='正在登入…';
-  try{const next=await request('/auth/v1/token?grant_type=password',{method:'POST',body:{email:$('loginEmail').value.trim(),password:$('loginPassword').value}});rememberSession({...next,expires_at:Math.floor(Date.now()/1000)+next.expires_in},$('rememberLogin').checked);$('loginPassword').value='';await checkEditor();if(!editor)throw new Error('帳號已登入，但尚未取得編輯權限，請聯絡管理員。');$('loginDialog').close();status(storageNotice||(rememberLogin?'管理員登入成功，已記住這台裝置的登入。':'管理員登入成功，這次只在目前分頁登入。'));if($('detail').open){const name=$('storeName').textContent;const r=DATA.find(r=>r.name===name);if(r)openStore(r)}}
+  try{const next=await request('/auth/v1/token?grant_type=password',{method:'POST',body:{email:$('loginEmail').value.trim(),password:$('loginPassword').value}});rememberSession({...next,expires_at:Math.floor(Date.now()/1000)+next.expires_in},$('rememberLogin').checked);$('loginPassword').value='';await checkEditor();if(!editor)throw new Error('帳號已登入，但尚未取得編輯權限，請聯絡管理員。');$('loginDialog').close();$('detailBody').querySelector('.repair-warranty')?.dispatchEvent(new Event('repair-login'));status(storageNotice||(rememberLogin?'管理員登入成功，已記住這台裝置的登入。':'管理員登入成功，這次只在目前分頁登入。'));if($('detail').open){const name=$('storeName').textContent;const r=DATA.find(r=>r.name===name);if(r)openStore(r)}}
   catch(e){$('loginError').textContent=e.message}finally{$('submitLogin').disabled=false}
 };
 $('logoutButton').onclick=async()=>{if(editState){alert('請先儲存或取消編輯。');return}const token=session?.access_token;rememberSession(null);editor=null;updateAccount();$('detail').close();try{if(token)await fetch(API_URL+'/auth/v1/logout',{method:'POST',headers:{apikey:PUBLIC_KEY,Authorization:'Bearer '+token}})}catch{}status('已登出，仍可公開查詢。')};
