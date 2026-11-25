@@ -270,6 +270,54 @@ function taipeiToday() {
   return [date.year, date.month, date.day].join('-');
 }
 
+async function downloadRepairWorkbook(store, items, components, kinds) {
+  const catalog = new Map(items.map(item => [item.id, item]));
+  const rows = [];
+  let cursor = 0;
+  for (;;) {
+    const params = new URLSearchParams({
+      select: 'id,equipment_id,asset_label,component,repaired_on,repair_kind,repair_note,expires_on',
+      equipment_id: 'in.(' + [...catalog.keys()].join(',') + ')',
+      id: 'gt.' + cursor,
+      order: 'id.asc',
+      limit: '500'
+    });
+    const page = await request('/rest/v1/qihai_repair_events?' + params, {auth: true});
+    if (!page.length) break;
+    rows.push(...page);
+    cursor = page.at(-1).id;
+  }
+  if (!rows.length) return 0;
+  rows.sort((a, b) => b.repaired_on.localeCompare(a.repaired_on) || b.id - a.id);
+  const table = [['店號', '門市', '系統', '設備名稱', '實際設備標示', '維修項目', '維修日期',
+    '更換品及請款方式', '維修備註', '保固到期日', '保固狀態']];
+  for (const row of rows) {
+    const item = catalog.get(row.equipment_id);
+    table.push([store.id, store.name, item.category, item.equipment, row.asset_label ?? '',
+      components[row.component] ?? '', row.repaired_on, row.component === 'board' ? '' : kinds[row.repair_kind] ?? '',
+      row.repair_note ?? '', row.expires_on ?? '', row.expires_on ? '' : '不保固']);
+  }
+  const zip = new JSZip();
+  zip.file('[Content_Types].xml', '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>');
+  zip.file('_rels/.rels', '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>');
+  zip.file('xl/workbook.xml', '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="維修紀錄" sheetId="1" r:id="rId1"/></sheets></workbook>');
+  zip.file('xl/_rels/workbook.xml.rels', '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>');
+  zip.file('xl/worksheets/sheet1.xml', extraWorksheet(table));
+  const bytes = await zip.generateAsync({type: 'uint8array', compression: 'DEFLATE'});
+  const url = URL.createObjectURL(new Blob([bytes], {type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+  const link = el('a');
+  link.href = url;
+  link.download = store.id + '_維修紀錄_' + taipeiToday() + '.xlsx';
+  document.body.append(link);
+  try {
+    link.click();
+  } finally {
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  return rows.length;
+}
+
 async function showRepairWarranty(store, content) {
   const section = el('section', 'panel repair-warranty');
   section.append(el('h3', '', '維修保固'));
@@ -344,7 +392,6 @@ async function showRepairWarranty(store, content) {
     for (const value of ['new', 'used_new_price', 'used']) kind.append(new Option(kinds[value], value));
     const kindField = wrap('更換品及請款方式', kind);
     const note = el('textarea');
-    note.required = true;
     note.maxLength = 1000;
     note.rows = 3;
     const button = el('button', '', '儲存維修紀錄');
@@ -357,9 +404,25 @@ async function showRepairWarranty(store, content) {
     more.hidden = true;
     const fields = el('fieldset');
     fields.append(wrap('設備', equipment), specs, wrap('維修日期', date),
-      wrap('維修項目', component), labelField, kindField, wrap('維修內容', note), button);
+      wrap('維修項目', component), labelField, kindField, wrap('維修備註（選填）', note), button);
     sectionForm.append(fields, feedback);
-    section.append(sectionForm, el('h4', '', '維修紀錄'), history, more);
+    const exportButton = el('button', '', '匯出維修紀錄 Excel');
+    exportButton.type = 'button';
+    const exportStatus = el('p', 'hint');
+    exportStatus.setAttribute('role', 'status');
+    exportButton.onclick = async () => {
+      exportButton.disabled = true;
+      exportStatus.textContent = '正在讀取此門市的維修紀錄…';
+      try {
+        const count = await downloadRepairWorkbook(store, items, components, kinds);
+        exportStatus.textContent = count ? '已匯出 ' + count + ' 筆維修紀錄。' : '目前沒有可匯出的維修紀錄。';
+      } catch (error) {
+        exportStatus.textContent = '匯出失敗。' + error.message;
+      } finally {
+        exportButton.disabled = false;
+      }
+    };
+    section.append(sectionForm, el('h4', '', '維修紀錄'), exportButton, exportStatus, history, more);
     const currentItem = () => items.find(item => item.id === equipment.value);
 
     let page = 0;
@@ -386,8 +449,9 @@ async function showRepairWarranty(store, content) {
         for (const row of rows) {
           const card = el('section', 'panel');
           const summary = row.component === 'board' ? row.repaired_on :
-            [row.repaired_on, row.asset_label, components[row.component], kinds[row.repair_kind]].join(' · ');
-          card.append(el('h4', '', summary), el('p', 'history-text', row.repair_note));
+            [row.repaired_on, row.asset_label, components[row.component], kinds[row.repair_kind]].filter(Boolean).join(' · ');
+          card.append(el('h4', '', summary));
+          if (row.repair_note) card.append(el('p', 'history-text', row.repair_note));
           if (row.component !== 'board') {
             card.append(el('p', 'hint', row.expires_on ? '保固到期 ' + row.expires_on : '不保固'));
           }
@@ -408,9 +472,10 @@ async function showRepairWarranty(store, content) {
     };
     component.onchange = () => {
       const board = component.value === 'board';
-      labelField.hidden = board;
-      label.disabled = board;
-      label.required = !board;
+      const needsLabel = currentItem().is_camera && !board;
+      labelField.hidden = !needsLabel;
+      label.disabled = !needsLabel;
+      label.required = needsLabel;
       kindField.hidden = board || component.value === 'camera_power';
       kind.disabled = kindField.hidden;
     };
